@@ -1,4 +1,5 @@
 import argparse
+from configparser import Interpolation
 import os
 import glob
 import random
@@ -10,26 +11,26 @@ import darknet
 
 def parser():
     parser = argparse.ArgumentParser(description="YOLO Object Detection")
-    parser.add_argument("--input", type=str, default="",
+    parser.add_argument("--input", type=str, default="/home/rzhang/Desktop/35",
                         help="image source. It can be a single image, a"
                         "txt with paths to them, or a folder. Image valid"
                         " formats are jpg, jpeg or png."
                         "If no input is given, ")
     parser.add_argument("--batch_size", default=1, type=int,
                         help="number of images to be processed at the same time")
-    parser.add_argument("--weights", default="yolov4.weights",
+    parser.add_argument("--weights", default="/home/rzhang/Desktop/second_AHGE/yolo_1375_final.weights",
                         help="yolo weights path")
-    parser.add_argument("--dont_show", action='store_true',
+    parser.add_argument("--dont_show", action='store_true',default=True,
                         help="windown inference display. For headless systems")
     parser.add_argument("--ext_output", action='store_true',
                         help="display bbox coordinates of detected objects")
-    parser.add_argument("--save_labels", action='store_true',
+    parser.add_argument("--save_labels", action='store_true',default=True,
                         help="save detections bbox for each image in yolo format")
-    parser.add_argument("--config_file", default="./cfg/yolov4.cfg",
+    parser.add_argument("--config_file", default="/home/rzhang/Desktop/second_AHGE/yolo_1375.cfg",
                         help="path to config file")
-    parser.add_argument("--data_file", default="./cfg/coco.data",
+    parser.add_argument("--data_file", default="/home/rzhang/Desktop/second_AHGE/collect.data",     #./cfg/coco.data
                         help="path to data file")
-    parser.add_argument("--thresh", type=float, default=.25,
+    parser.add_argument("--thresh", type=float, default=.1,
                         help="remove detections with lower confidence")
     return parser.parse_args()
 
@@ -95,27 +96,63 @@ def prepare_batch(images, network, channels=3):
     darknet_images = batch_array.ctypes.data_as(darknet.POINTER(darknet.c_float))
     return darknet.IMAGE(width, height, channels, darknet_images)
 
+def letterbox_image(image, dst_size, pad_color = (114,114,114)):
+    src_h, src_w = image.shape[:2]
+    dst_h, dst_w = dst_size
+    scale = min(dst_h / src_h, dst_w / src_w)
+    pad_h, pad_w = int(round(src_h * scale)), int(round(src_w * scale))
+
+    if image.shape[0:2] != (pad_w, pad_h):
+        image_dst = cv2.resize(image, (pad_w, pad_h), interpolation=cv2.INTER_LINEAR)
+    else:
+        image_dst = image
+
+    top = int((dst_h - pad_h) / 2)
+    down = int((dst_h - pad_h + 1) / 2)
+    left = int((dst_w - pad_w) / 2)
+    right = int((dst_w - pad_w + 1) / 2)
+
+    # add border
+    image_dst = cv2.copyMakeBorder(image_dst, top, down, left, right, cv2.BORDER_CONSTANT, value=pad_color)
+
+    # x_offset, y_offset = max(left, right) / dst_w, max(top, down) / dst_h
+    return image_dst      #, x_offset, y_offset
+
 
 def image_detection(image_or_path, network, class_names, class_colors, thresh):
     # Darknet doesn't accept numpy images.
     # Create one with image we reuse for each detect
     width = darknet.network_width(network)
     height = darknet.network_height(network)
-    darknet_image = darknet.make_image(width, height, 3)
+    darknet_image = darknet.make_image(width, height, 3)   #必须要resize以匹配模型否则会预测乱
+    
+    # if type(image_or_path) == "str":
+    #     image = cv2.imread(image_or_path)
+    # else:
+    #     image = image_or_path
+    # image_or_path = '/home/rzhang/Desktop/hs/3_R10C18_3089_184_1.png'
+    image = cv2.imread(image_or_path)
 
-    if type(image_or_path) == "str":
-        image = cv2.imread(image_or_path)
-    else:
-        image = image_or_path
+    h,w,_ = image.shape
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     image_resized = cv2.resize(image_rgb, (width, height),
                                interpolation=cv2.INTER_LINEAR)
 
+
+    # image_resized =  cv2.resize(image, (width, height),interpolation=cv2.INTER_LINEAR)
+    # sized = cv2.cvtColor(image_resized,cv2.COLOR_BGR2GRAY)
+    # img_in = np.expand_dims(sized, axis=0)
+    # image_resized = img_in.transpose(1,2,0)
+   
+
     darknet.copy_image_from_bytes(darknet_image, image_resized.tobytes())
     detections = darknet.detect_image(network, class_names, darknet_image, thresh=thresh)
     darknet.free_image(darknet_image)
-    image = darknet.draw_boxes(detections, image_resized, class_colors)
-    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), detections
+    image = darknet.draw_boxes(detections, image_resized, class_colors,h,w)
+    # image = cv2.resize(image, (w, h),
+    #                            interpolation=cv2.INTER_LINEAR)
+    # return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), detections,[w,h]
+    return image, detections, [w,h]
 
 
 def batch_detection(network, images, class_names, class_colors,
@@ -143,6 +180,7 @@ def image_classification(image, network, class_names):
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     image_resized = cv2.resize(image_rgb, (width, height),
                                 interpolation=cv2.INTER_LINEAR)
+    # image_resized = image_rgb
     darknet_image = darknet.make_image(width, height, 3)
     darknet.copy_image_from_bytes(darknet_image, image_resized.tobytes())
     detections = darknet.predict_image(network, darknet_image)
@@ -160,16 +198,48 @@ def convert2relative(image, bbox):
     return x/width, y/height, w/width, h/height
 
 
-def save_annotations(name, image, detections, class_names):
+def save_annotations(name, image, detections, class_names, size):
     """
     Files saved with image_name.txt and relative coordinates
     """
-    file_name = os.path.splitext(name)[0] + ".txt"
-    with open(file_name, "w") as f:
+    output_path = '/home/rzhang/Desktop/output/check_result.txt'
+    # file_name = os.path.splitext(name)[0] + ".txt"
+    file_name = os.path.splitext(name)[0].split('/')[-1] 
+    r =  min(image.shape[1] /size[0], image.shape[0] / size[1])
+    # scalew = size[0] / image.shape[1] 
+    # scaleh = size[1] / image.shape[0]
+    unpad_w = int(round(size[0] * r))
+    unpad_h = int(round(size[1] * r))
+    dw = image.shape[1] - unpad_w
+    dh = image.shape[0] - unpad_h
+    dw /=2
+    dh /=2
+    scale_w = size[0] / unpad_w
+    scale_h = size[1] / unpad_h
+    with open(output_path, "a") as f:
+        f.write("{}=>[".format(file_name))
         for label, confidence, bbox in detections:
-            x, y, w, h = convert2relative(image, bbox)
-            label = class_names.index(label)
-            f.write("{} {:.4f} {:.4f} {:.4f} {:.4f} {:.4f}\n".format(label, x, y, w, h, float(confidence)))
+            # x, y, w, h = convert2relative(image, bbox)   ##不需要转相对值
+            x,y,w,h=bbox
+            x = x - w / 2
+            y = y - h / 2
+            ####letter_box
+            # xx = x + w
+            # yy = y + h
+            # x  = (x - dw)  * scale_w
+            # xx = (xx - dw) * scale_w
+            # y  = (y - dh)  * scale_h
+            # yy = (yy - dh) * scale_h
+            # label=label.split('_')[0]
+            # w = xx - x
+            # h = yy - y
+
+            
+            # x2 = x + w/2
+            # y2 = y + w/2
+            # label = class_names.index(label)  不能直接转成label
+            f.write("[{} {:.4f} {:.4f} {:.4f} {:.4f} {:.4f}],".format(label,float(confidence)*0.01,x, y, w, h))
+        f.write(']\n')
 
 
 def batch_detection_example():
@@ -205,29 +275,36 @@ def main():
     )
 
     images = load_images(args.input)
-
+    
     index = 0
     while True:
         # loop asking for new image paths if no list is given
         if args.input:
             if index >= len(images):
-                break
+                break  
+            # images = glob.glob("/home/rzhang/Desktop/hs/*.png")
             image_name = images[index]
+            
         else:
             image_name = input("Enter Image Path: ")
+
         prev_time = time.time()
-        image, detections = image_detection(
+        image, detections ,size = image_detection(
             image_name, network, class_names, class_colors, args.thresh
             )
         if args.save_labels:
-            save_annotations(image_name, image, detections, class_names)
+            save_annotations(image_name, image, detections, class_names, size)
         darknet.print_detections(detections, args.ext_output)
         fps = int(1/(time.time() - prev_time))
         print("FPS: {}".format(fps))
+        new_name=image_name.split('/')[-1]
+        img_path=os.path.join("/home/rzhang/Desktop/output2",new_name)
+        cv2.imwrite(img_path,image)
         if not args.dont_show:
             cv2.imshow('Inference', image)
             if cv2.waitKey() & 0xFF == ord('q'):
                 break
+        
         index += 1
 
 

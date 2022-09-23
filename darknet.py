@@ -8,11 +8,14 @@ Directly viewing or returning bounding-boxed images requires scikit-image to be 
 Use pip3 instead of pip on some systems to be sure to install modules for python3
 """
 
+from configparser import Interpolation
 from ctypes import *
 import math
 import random
 import os
-
+from turtle import right
+import numpy as np
+import cv2
 
 class BOX(Structure):
     _fields_ = [("x", c_float),
@@ -67,12 +70,34 @@ def bbox2points(bbox):
     to corner points cv2 rectangle
     """
     x, y, w, h = bbox
+    # print(x,y,w,h)
     xmin = int(round(x - (w / 2)))
     xmax = int(round(x + (w / 2)))
     ymin = int(round(y - (h / 2)))
     ymax = int(round(y + (h / 2)))
+   
     return xmin, ymin, xmax, ymax
 
+def resize_ibox(image,rec,w,h):
+    """
+    Input must be Image or tuple
+    """
+    now_w = image.shape[1]
+    now_h = image.shape[0]
+    scale_w = w / now_w
+    scale_h = h / now_h
+    image = cv2.cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = cv2.resize(image,(w,h),interpolation=cv2.INTER_LINEAR)
+    left, top, right, bottom = rec
+    left *= scale_w
+    right *= scale_w
+    top *= scale_h
+    bottom *= scale_h
+    left = int(round(left))
+    right = int(round(right))
+    top = int(round(top))
+    bottom = int(round(bottom))
+    return  image, left, top, right, bottom
 
 def class_colors(names):
     """
@@ -111,19 +136,23 @@ def print_detections(detections, coordinates=False):
     for label, confidence, bbox in detections:
         x, y, w, h = bbox
         if coordinates:
-            print("{}: {}%    (left_x: {:.0f}   top_y:  {:.0f}   width:   {:.0f}   height:  {:.0f})".format(label, confidence, x, y, w, h))
+            print("{}: {}%    (left_x: {:.6f}   top_y:  {:.6f}   width:   {:.6f}   height:  {:.6f})".format(label, confidence, x, y, w, h))
         else:
             print("{}: {}%".format(label, confidence))
 
 
-def draw_boxes(detections, image, colors):
-    import cv2
+def draw_boxes(detections, image, colors, height, width):
+    # import cv2
     for label, confidence, bbox in detections:
+        # rec = bbox2points(bbox)
         left, top, right, bottom = bbox2points(bbox)
+        # image,left, top, right, bottom= resize_ibox(image,rec,width,height)
+      
         cv2.rectangle(image, (left, top), (right, bottom), colors[label], 1)
         cv2.putText(image, "{} [{:.2f}]".format(label, float(confidence)),
-                    (left, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                    colors[label], 2)
+                    (left, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.3,
+                    colors[label], 1)
+    
     return image
 
 
